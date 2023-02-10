@@ -1,6 +1,11 @@
-<#
+﻿<#
 .SYNOPSIS
 	This script performs the installation or uninstallation of an application(s).
+	# LICENSE #
+	PowerShell App Deployment Toolkit - Provides a set of functions to perform common application deployment tasks on Windows.
+	Copyright (C) 2017 - Sean Lillis, Dan Cunningham, Muhammad Mashwani, Aman Motazedian.
+	This program is free software: you can redistribute it and/or modify it under the terms of the GNU Lesser General Public License as published by the Free Software Foundation, either version 3 of the License, or any later version. This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+	You should have received a copy of the GNU Lesser General Public License along with this program. If not, see <http://www.gnu.org/licenses/>.
 .DESCRIPTION
 	The script is provided as a template to perform an install or uninstall of an application(s).
 	The script either performs an "Install" deployment type or an "Uninstall" deployment type.
@@ -13,7 +18,7 @@
 .PARAMETER AllowRebootPassThru
 	Allows the 3010 return code (requires restart) to be passed back to the parent process (e.g. SCCM) if detected from an installation. If 3010 is passed back to SCCM, a reboot prompt will be triggered.
 .PARAMETER TerminalServerMode
-	Changes to "user install mode" and back to "user execute mode" for installing/uninstalling applications for Remote Destkop Session Hosts/Citrix servers.
+	Changes to "user install mode" and back to "user execute mode" for installing/uninstalling applications for Remote Desktop Session Hosts/Citrix servers.
 .PARAMETER DisableLogging
 	Disables logging to file for the script. Default is: $false.
 .EXAMPLE
@@ -33,9 +38,10 @@
 	http://psappdeploytoolkit.com
 #>
 [CmdletBinding()]
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSUseDeclaredVarsMoreThanAssignments", "", Justification="Suppress AppVeyor errors on unused variables below")]
 Param (
 	[Parameter(Mandatory=$false)]
-	[ValidateSet('Install','Uninstall')]
+	[ValidateSet('Install','Uninstall','Repair')]
 	[string]$DeploymentType = 'Install',
 	[Parameter(Mandatory=$false)]
 	[ValidateSet('Interactive','Silent','NonInteractive')]
@@ -50,7 +56,7 @@ Param (
 
 Try {
 	## Set the script execution policy for this process
-	Try { Set-ExecutionPolicy -ExecutionPolicy 'ByPass' -Scope 'Process' -Force -ErrorAction 'Stop' } Catch { Write-Error "Failed to set the execution policy to Bypass for this process." }
+	Try { Set-ExecutionPolicy -ExecutionPolicy 'ByPass' -Scope 'Process' -Force -ErrorAction 'Stop' } Catch { Write-Error "Failed to set the execution policy to Bypass for this process. This is normal." }
 
 	##*===============================================
 	##* VARIABLE DECLARATION
@@ -78,8 +84,8 @@ Try {
 
 	## Variables: Script
 	[string]$deployAppScriptFriendlyName = 'Deploy Application'
-	[version]$deployAppScriptVersion = [version]'3.6.9'
-	[string]$deployAppScriptDate = '02/12/2017'
+	[version]$deployAppScriptVersion = [version]'3.8.4'
+	[string]$deployAppScriptDate = '26/01/2021'
 	[hashtable]$deployAppScriptParameters = $psBoundParameters
 
 	## Variables: Environment
@@ -105,20 +111,20 @@ Try {
 	##* END VARIABLE DECLARATION
 	##*===============================================
 
-	If ($deploymentType -ine 'Uninstall') {
+	If ($deploymentType -ine 'Uninstall' -and $deploymentType -ine 'Repair') {
 		##*===============================================
 		##* PRE-INSTALLATION
 		##*===============================================
 		[string]$installPhase = 'Pre-Installation'
 
-		## Show Welcome Message, close applications if required, verify there is enough disk space to complete the install, and persist the prompt
+		## Show Welcome Message, close Internet Explorer if required, allow up to 3 deferrals, verify there is enough disk space to complete the install, and persist the prompt
 		Show-InstallationWelcome -CloseApps 'java' -CheckDiskSpace -PersistPrompt
 
 		## Show Progress Message (with the default message)
 		Show-InstallationProgress
 
 		## <Perform Pre-Installation tasks here>
-        Remove-MSIApplications -Name "Java 8 Update 66" -PassThru
+		Remove-MSIApplications -Name "Java 8 Update 66" -PassThru
 
 		##*===============================================
 		##* INSTALLATION
@@ -141,10 +147,9 @@ Try {
 		[string]$installPhase = 'Post-Installation'
 
 		## <Perform Post-Installation tasks here>
-
 		Remove-File -Path "$envCommonStartMenuPrograms\Java\Check For Updates.lnk" -ContinueOnError $true
 		## Display a message at the end of the install
-		If (-not $useDefaultMsi) {}
+
 	}
 	ElseIf ($deploymentType -ieq 'Uninstall')
 	{
@@ -153,7 +158,7 @@ Try {
 		##*===============================================
 		[string]$installPhase = 'Pre-Uninstallation'
 
-		## Show Welcome Message, close applications with a 60 second countdown before automatically closing
+		## Show Welcome Message, close Internet Explorer with a 60 second countdown before automatically closing
 		Show-InstallationWelcome -CloseApps 'java' -CloseAppsCountdown 60
 
 		## Show Progress Message (with the default message)
@@ -173,7 +178,7 @@ Try {
 			Execute-MSI @ExecuteDefaultMSISplat
 		}
 
-		# <Perform Uninstallation tasks here>
+		## <Perform Uninstallation tasks here>
 		Remove-MSIApplications -Name "Java 8 Update 66" -PassThru
 
 		##*===============================================
@@ -185,7 +190,42 @@ Try {
 
 
 	}
+	ElseIf ($deploymentType -ieq 'Repair')
+	{
+		##*===============================================
+		##* PRE-REPAIR
+		##*===============================================
+		[string]$installPhase = 'Pre-Repair'
 
+		## Show Welcome Message, close Internet Explorer with a 60 second countdown before automatically closing
+		Show-InstallationWelcome -CloseApps 'java' -CloseAppsCountdown 60
+
+		## Show Progress Message (with the default message)
+		Show-InstallationProgress
+
+		## <Perform Pre-Repair tasks here>
+
+		##*===============================================
+		##* REPAIR
+		##*===============================================
+		[string]$installPhase = 'Repair'
+
+		## Handle Zero-Config MSI Repairs
+		If ($useDefaultMsi) {
+			[hashtable]$ExecuteDefaultMSISplat =  @{ Action = 'Repair'; Path = $defaultMsiFile; }; If ($defaultMstFile) { $ExecuteDefaultMSISplat.Add('Transform', $defaultMstFile) }
+			Execute-MSI @ExecuteDefaultMSISplat
+		}
+		## <Perform Repair tasks here>
+
+		##*===============================================
+		##* POST-REPAIR
+		##*===============================================
+		[string]$installPhase = 'Post-Repair'
+
+		## <Perform Post-Repair tasks here>
+
+
+    }
 	##*===============================================
 	##* END SCRIPT BODY
 	##*===============================================
@@ -200,11 +240,13 @@ Catch {
 	Show-DialogBox -Text $mainErrorMessage -Icon 'Stop'
 	Exit-Script -ExitCode $mainExitCode
 }
+
+
 # SIG # Begin signature block
 # MIImVgYJKoZIhvcNAQcCoIImRzCCJkMCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCDD1mtmLGUDEcYS
-# rPmwWoG+Djx1boXhQSUVs6OjwMK2N6CCH8EwggVvMIIEV6ADAgECAhBI/JO0YFWU
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCC8ahVRPZfNON0B
+# eAyq8kc3BJgUVmZ8msPxrigPGsWSFqCCH8EwggVvMIIEV6ADAgECAhBI/JO0YFWU
 # jTanyYqJ1pQWMA0GCSqGSIb3DQEBDAUAMHsxCzAJBgNVBAYTAkdCMRswGQYDVQQI
 # DBJHcmVhdGVyIE1hbmNoZXN0ZXIxEDAOBgNVBAcMB1NhbGZvcmQxGjAYBgNVBAoM
 # EUNvbW9kbyBDQSBMaW1pdGVkMSEwHwYDVQQDDBhBQUEgQ2VydGlmaWNhdGUgU2Vy
@@ -378,32 +420,32 @@ Catch {
 # ZDErMCkGA1UEAxMiU2VjdGlnbyBQdWJsaWMgQ29kZSBTaWduaW5nIENBIFIzNgIR
 # AKVN33D73PFMVIK48rFyyjEwDQYJYIZIAWUDBAIBBQCggYQwGAYKKwYBBAGCNwIB
 # DDEKMAigAoAAoQKAADAZBgkqhkiG9w0BCQMxDAYKKwYBBAGCNwIBBDAcBgorBgEE
-# AYI3AgELMQ4wDAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQxIgQggpBcBScM7rEu
-# QbHsUUodV0SGKi4hAWUA0ir7FcsUZVEwDQYJKoZIhvcNAQEBBQAEggGALlzKWubP
-# Qu8QyUsIFNzXemwVK7exlLw5eBEH9QN0DjYHotFNNXMHoNIEzoETeLKvS3x7v/q0
-# jL+z0+ng/8niX2uXjTV6OmQe1m2M08WnKGw/+4L/D4oOSUpJYCPeZbBObObplHbS
-# qwNDTQgZ4lSnYPrP87dC/MkeNiERvCDAHaAd6xWa5C3K6JaxdEOVbFZOpT0EzFMX
-# Qx9OcGODSVSneKZ6pO1iNrhAHgLn+x8tWj9uMhfib9ToOMHtxGuj7JG/OM4KOr2A
-# mmx2kwvqcBzq2urYV3QPepGI2B4J+TMdJP/tCWFr77ISsrpxbYOtM3TsaShjtzIv
-# qTO95/t0/WSTjoZLRByX820ICUJ2lQNufpxcTcKdmpAKyCAU16yQZER0NmAWLpaE
-# 2IFEJ9UaQMXs2toG1czYYiwY9EWdpuucDpxxO2Q1Jam5ZSNk/ofZ5VuxBSOcJcxX
-# sh+YeTkOBwY9wGjc1LzAnUP64M9XgSV58b76H7OHDXslZ8mu3PfyiY27oYIDTDCC
+# AYI3AgELMQ4wDAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQxIgQg1giGcitkWK8y
+# pwXdugZjmz9aA934H0hh2NJQTwxbbLkwDQYJKoZIhvcNAQEBBQAEggGAFb5tqorw
+# izACmvcv6WgN5PMcHdEEiCNmPtlWJGWai7HahUGSC8b1d4wPciSQpY4+ZCyyWLbb
+# rcplFlNPh9kJZdgkwfS3xD9B6nzNi96Dzq8Kg5NQgAy8IOVQE9VAMu+LcA1Xxiv5
+# 3v3TXL9pGt/4U7YXq42QUIupn1NfoopUdy5pgWk2+Fxkkc9kVWYgOOVN6bTF0u1V
+# A6jrqIuLTCiOJtFqmanTMjSVp4wWxRg4dEuD4aQ+KnsbuEzc8uQhCqU9eC/Xqb/d
+# AToaLuZyanhq4DC+XCUWeTyz09nEQQlF2rx4xEsG/9YcsHts940txB+QxBg9QKCT
+# UttQKUq/ApAZTvHBySUG305cjC4bReKUEw81IThZLPo/VX0tGdUhH4Hom6GB92E2
+# YB3NjTJxyohoigD/1FWOJisGshtHRnfmAZAZYuXUDFw39JwFaG+xKftlQBP+6SjZ
+# /cLbXfk1c/z2ppAM/QQ+XfIx+p6oppCCOQ/tmO/fVxN18LsX4Z1mW4mWoYIDTDCC
 # A0gGCSqGSIb3DQEJBjGCAzkwggM1AgEBMIGSMH0xCzAJBgNVBAYTAkdCMRswGQYD
 # VQQIExJHcmVhdGVyIE1hbmNoZXN0ZXIxEDAOBgNVBAcTB1NhbGZvcmQxGDAWBgNV
 # BAoTD1NlY3RpZ28gTGltaXRlZDElMCMGA1UEAxMcU2VjdGlnbyBSU0EgVGltZSBT
 # dGFtcGluZyBDQQIRAJA5f5rSSjoT8r2RXwg4qUMwDQYJYIZIAWUDBAICBQCgeTAY
 # BgkqhkiG9w0BCQMxCwYJKoZIhvcNAQcBMBwGCSqGSIb3DQEJBTEPFw0yMzAyMTAy
-# MDA2MTVaMD8GCSqGSIb3DQEJBDEyBDDvr418RmsuUsHNLy0LMi7TPjEd795aIdnF
-# uWl3Fm9IMMizfcrk/JzXlbyS38aS6lgwDQYJKoZIhvcNAQEBBQAEggIAI+alfVrV
-# QMOjiupRDQsbv3Do9g4npC5V9gBUh6jADdsZRMm1s0CrW0LrJt2GkCq39ggTbdeu
-# KY40nxmUbpo3nO8ZB/2LN/WOZqt+NETyRvyIOJlXrYOhrDtfHRBmNDdBAYHOSG2Y
-# Z5RTnd8r0OU18I1pX731ZCMmGIb2tpjn+voCAnAqF4uGY2i6m0AJMkht9QAyIXkA
-# +OkxKj1mYEUssbhAkmIj6Kbl+WlKpkg6sTa9nEbofjIzutQKrXclLBjhkjn5h98f
-# ntJ5NZjz8ftLlAuUeE8vMgIsu84niiipBOA35R9AVAIsLpU5SuAjEylcH8x5+/ZY
-# 5elA1qALBkD6Hqn1GMJaCHxddJccJ630ucwL9jVtH7AILv0hYWYXMPYunfcTZtQ5
-# JJ2TiKN7TJNWDJ9RPOVcy/I9gTugMgQyiZRwSuO+2pfbnfxMuiGcjLw8EHcFZrGH
-# owq2CHk1Glvv7ffeWp3bWOOYXgbkEln7GCMhmXT9iC64kx9/ZI0suCjD25Ww0F9R
-# O+QVjPFCWJTd9GiR84Xounp/8xPVyJ1sFy2nRN4LgAVzPETa9poBaasQ6fjJx/rR
-# RoSg8GcVTSwhu2bM72kpg/iMvQPwhnUGHs7ew126niXXXXbe2vWqbTtkUsneMgu8
-# vi0CXFCVZyj5CYP3XBBN609O9AppHLGikYQ=
+# MDI3MzJaMD8GCSqGSIb3DQEJBDEyBDAD5Qt0evmRiSthWWX4/n8wgN4yN+skWM0M
+# YyHMnALLN3WUHQDPM6op4DzFWYeHfR8wDQYJKoZIhvcNAQEBBQAEggIAFzB7CJs7
+# 4Uy1A5CBOY0sUZj2SRoN6pVxN1ewhfL9xP8ms3gdP87WxGvVZKNGl5VxzNvZBTwc
+# Nd9QpzK4dAJAbDr0J5Y9ZFWFWinEEFTyOlhv40+hTRkRS1pg6fTDtR77P/f2Jc2V
+# lcWLgL0y+wfdlP79DcdaZU1NMaQhrZrBCjedKqP1MBG9Xz/uWY/r5SF4uEKurfNB
+# ZEReTKGNiPMNNweWbYWbgsfrgFDojQ+LC+LBSz/OIz3Kzd0AhR/wmsSMFbl+vBlF
+# nGjfbViT8ero5erKzHOp4CCGuFKlBHwvmLLgrbH5u8KjYyskJSBkQKRmTA+FirIf
+# 04OoBm5PmRebKeRc2hEQH7WosrPK3PX/nJHhqxv6IK41/hVKjgSlXo9DyyINnP3+
+# ujRrw3pfNgnpyreYoniHB5+j4abSEJ0gFFtKZ+2CuOz5LNo4LLxboKWA7JbpAvTn
+# fzd4Sr5AJhIwwfo3RQ5y5v1LnjkRfKb7l5pC6NNWUFLmM7phBV5UFC94wwWbN4Y9
+# duc4XHWtcGv7svf7RU5oDKUGYpRc5RRmP78WrDSHQBybo4LWktFUbVHDIb+28RL+
+# wQGVlhcw53JtnTDZReNc7BrihKWTigYXW9/RdI1Y+XLqgQ1JBYms1O1Vh7EACcyx
+# +WoNF7z/A0fP6KEt3mOFFxMTtZ+fsFQZbtQ=
 # SIG # End signature block
